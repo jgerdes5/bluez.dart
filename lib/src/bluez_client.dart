@@ -7,6 +7,7 @@ import 'package:bluez/src/bluez_device.dart';
 import 'package:bluez/src/bluez_enums.dart';
 import 'package:bluez/src/bluez_gatt_descriptor.dart';
 import 'package:bluez/src/bluez_gatt_service.dart';
+import 'package:bluez/src/bluez_media_player.dart';
 import 'package:bluez/src/bluez_object.dart';
 import 'package:dbus/dbus.dart';
 import 'package:bluez/src/bluez_agent.dart';
@@ -247,6 +248,11 @@ extension BluezClientInternalExtension on BlueZClient {
   BlueZAdapter? getAdapter(DBusObjectPath objectPath) {
     var object = _objects[objectPath];
     return object == null ? null : BlueZAdapter(this, object);
+  }
+
+  BlueZMediaPlayer? getMediaPlayer(DBusObjectPath objectPath) {
+    var object = _objects[objectPath];
+    return object == null ? null : BlueZMediaPlayer(this, object);
   }
 
   List<BlueZGattService> getGattServices(DBusObjectPath parentPath) {

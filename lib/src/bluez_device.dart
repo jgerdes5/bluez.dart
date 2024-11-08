@@ -5,6 +5,8 @@ import 'package:bluez/src/bluez_gatt_service.dart';
 import 'package:bluez/src/bluez_manufacturer_id.dart';
 import 'package:bluez/src/bluez_object.dart';
 import 'package:bluez/src/bluez_uuid.dart';
+import 'package:bluez/src/bluez_media_player.dart';
+import 'package:bluez/src/bluez_media_control.dart';
 import 'package:dbus/dbus.dart';
 
 /// A Bluetooth device.
@@ -212,4 +214,12 @@ class BlueZDevice {
   /// The Gatt services provided by this device.
   List<BlueZGattService> get gattServices =>
       _client.getGattServices(_object.path);
+
+  /// The media control provided by this device.
+  BlueZMediaControl get mediaControl =>
+      BlueZMediaControl(_object);
+
+  /// The media player this device belongs to.
+  BlueZMediaPlayer get mediaPlayer =>
+      _client.getMediaPlayer(mediaControl.player)!;
 }
