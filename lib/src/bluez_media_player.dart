@@ -58,17 +58,19 @@ class BlueZMediaPlayer {
   int get position => _object.getUint32Property(_deviceInterfaceName, 'Position') ?? 0;
 
   /// Get current track information
-  Map<String, String> get track {
+  Map<String, Object> get track {
     var value = _object.getCachedProperty(_deviceInterfaceName, 'Track') ??
         DBusDict(DBusSignature('s'), DBusSignature('v'), {});
     if (value.signature != DBusSignature('a{sv}')) {
       return {};
     }
-    String processValue(DBusValue value) {
-      if (value.signature != DBusSignature('s')) {
-        return '';
+    Object processValue(DBusValue value) {
+      if (value.signature == DBusSignature('s')) {
+        return value.asString();
+      } else if (value.signature == DBusSignature('u')) {
+        return value.asUint32();
       }
-      return value.asString();
+      return '';
     }
     return value.asDict().map((key, value) => MapEntry(key.asString(), processValue(value.asVariant())));
   }
