@@ -3142,6 +3142,44 @@ void main() {
     expect(client.devices.map((d) => d.address), ['00:11:22:33:44:55']);
   });
 
+  test('a restart re-registers the agent', () async {
+    // The new daemon has never heard of our agent, and nothing else would
+    // tell it: the D-Bus object is still exported on our side and `_agent` is
+    // still set, so a client cannot recover by registering again. Without
+    // this, an inbound pairing after a restart falls back to Just Works - a
+    // device in range pairs with no confirmation and nothing on screen.
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    await bluez.addAdapter('hci0');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+    await client.registerAgent(TestAgent(),
+        capability: BlueZAgentCapability.displayYesNo);
+    expect(bluez.agentPath, isNotNull);
+    expect(bluez.agentCapability, equals('DisplayYesNo'));
+
+    // bluetoothd goes and comes back, knowing nothing about us.
+    await bluez.close();
+    var restarted = MockBlueZServer(clientAddress);
+    await restarted.start();
+    addTearDown(() async => await restarted.close());
+    await restarted.addAdapter('hci0');
+
+    // Wait for the repopulation the name change triggers.
+    for (var i = 0; i < 100 && restarted.agentPath == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(restarted.agentPath, isNotNull);
+    expect(restarted.agentCapability, equals('DisplayYesNo'));
+  });
+
   test('awaitDevice - answers for a path the cache has not seen', () async {
     // What an agent handler needs. InterfacesAdded is delivered
     // asynchronously while an Agent1 call is dispatched synchronously from the

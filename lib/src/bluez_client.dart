@@ -42,6 +42,7 @@ class BlueZClient {
   // Subscription to object manager signals.
   StreamSubscription? _objectManagerSubscription;
   StreamSubscription? _nameOwnerSubscription;
+  Future<void> _repopulating = Future.value();
 
   /// Stream of media players as they are added.
   ///
@@ -197,7 +198,12 @@ class BlueZClient {
     // exist, until some unrelated property changed on each one.
     _nameOwnerSubscription =
         _bus.nameOwnerChanged.where((e) => e.name == 'org.bluez').listen((_) {
-      unawaited(_repopulate());
+      // Serialised: a restart produces two owner changes - the name lost, then
+      // acquired - and package:dbus can deliver both from one socket read.
+      // Two repopulations interleaving leaves the loser announcing objects
+      // that have already been replaced in the cache, so a listener ends up
+      // subscribed to an orphaned controller that can never fire.
+      _repopulating = _repopulating.then((_) => _repopulate());
     });
 
     await _populate();
@@ -249,6 +255,9 @@ class BlueZClient {
 
     try {
       await _populate();
+      // The new daemon has never heard of our agent. Re-registering is not
+      // optional: without it an inbound pairing falls back to Just Works.
+      await _reregisterAgent();
     } on DBusMethodResponseException catch (_) {
       // bluetoothd is on its way out rather than back in - the name changed
       // owner to nobody. The next change brings us back.
@@ -287,15 +296,22 @@ class BlueZClient {
     if (_agent != null) {
       throw 'Agent already registered';
     }
+    _agentCapability = capability;
+    _agentIsDefault = false;
 
     var object = _objects[DBusObjectPath('/org/bluez')];
     if (object == null) {
       throw 'Missing /org/bluez object required for agent registration';
     }
 
-    _agent = BlueZAgentObject(
+    var object_ = BlueZAgentObject(
         this, agent, path ?? DBusObjectPath('/org/bluez/Agent'));
-    await _bus.registerObject(_agent!);
+    // Assigned before the calls that can fail, so a caller that catches a
+    // failure here still has a client whose state matches reality: the D-Bus
+    // object is exported and BlueZ may well hold it, so `unregisterAgent`
+    // has to be able to take it back.
+    _agent = object_;
+    await _bus.registerObject(object_);
 
     var capabilityString = {
           BlueZAgentCapability.displayOnly: 'DisplayOnly',
@@ -310,6 +326,53 @@ class BlueZClient {
         [_agent!.path, DBusString(capabilityString)],
         replySignature: DBusSignature(''));
   }
+
+  BlueZAgentCapability? _agentCapability;
+  bool _agentIsDefault = false;
+
+  /// Registers the agent again with a daemon that has just come back.
+  ///
+  /// A new bluetoothd has no record of our agent, and nothing else would ever
+  /// tell it: the D-Bus object is still exported on our side and `_agent` is
+  /// still set, so a client cannot recover by calling [registerAgent] again -
+  /// it would be told the agent is already registered. Without this, an
+  /// inbound pairing after `systemctl restart bluetooth` falls back to Just
+  /// Works: a device in range pairs with no confirmation and nothing on
+  /// screen.
+  Future<void> _reregisterAgent() async {
+    var agent = _agent;
+    var capability = _agentCapability;
+    if (agent == null || capability == null) {
+      return;
+    }
+    var object = _objects[DBusObjectPath('/org/bluez')];
+    if (object == null) {
+      return;
+    }
+    try {
+      await object.callMethod('org.bluez.AgentManager1', 'RegisterAgent',
+          [agent.path, DBusString(_capabilityName(capability))],
+          replySignature: DBusSignature(''));
+      if (_agentIsDefault) {
+        await object.callMethod(
+            'org.bluez.AgentManager1', 'RequestDefaultAgent', [agent.path],
+            replySignature: DBusSignature(''));
+      }
+    } on DBusMethodResponseException catch (_) {
+      // The daemon is not ready for it yet. Nothing else is lost: the next
+      // owner change tries again.
+    }
+  }
+
+  static String _capabilityName(BlueZAgentCapability capability) =>
+      {
+        BlueZAgentCapability.displayOnly: 'DisplayOnly',
+        BlueZAgentCapability.displayYesNo: 'DisplayYesNo',
+        BlueZAgentCapability.keyboardOnly: 'KeyboardOnly',
+        BlueZAgentCapability.noInputNoOutput: 'NoInputNoOutput',
+        BlueZAgentCapability.keyboardDisplay: 'KeyboardDisplay',
+      }[capability] ??
+      '';
 
   /// Unregisters the agent handler previouly registered with [registerAgent].
   Future<void> unregisterAgent() async {
@@ -335,9 +398,16 @@ class BlueZClient {
       throw 'Missing /org/bluez object required for agent unregistration';
     }
 
+    var agent = _agent;
+    if (agent == null) {
+      throw 'No agent registered';
+    }
     await object.callMethod(
-        'org.bluez.AgentManager1', 'RequestDefaultAgent', [_agent!.path],
+        'org.bluez.AgentManager1', 'RequestDefaultAgent', [agent.path],
         replySignature: DBusSignature(''));
+    // Remembered, so a daemon restart can ask again - and checked above
+    // rather than dereferenced, which is what every other method here does.
+    _agentIsDefault = true;
   }
 
   /// Terminates all active connections. If a client remains unclosed, the Dart process may not terminate.

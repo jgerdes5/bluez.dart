@@ -2,6 +2,23 @@
 
 ## 0.8.2+headunit.5
 
+* **The agent is registered again after a daemon restart.** A new bluetoothd
+  has no record of it, and a client could not recover: the D-Bus object is
+  still exported and `_agent` is still set, so `registerAgent` answers "already
+  registered". An inbound pairing after `systemctl restart bluetooth` therefore
+  fell back to Just Works - a device in range pairing with no confirmation and
+  nothing on screen, which is the exact threat an agent exists to prevent. The
+  capability and whether the agent was the default are remembered so the
+  re-registration is identical.
+* **`_repopulate` is serialised.** A restart produces two owner changes - name
+  lost, then acquired - and package:dbus can deliver both from one socket read.
+  Two repopulations interleaving left the loser announcing objects already
+  replaced in the cache, so a listener subscribed to an orphaned controller
+  that could never fire.
+* **`registerAgent` assigns `_agent` before the calls that can fail**, so a
+  caller that catches a half-registration still has a client whose state
+  matches reality and can take the agent back. `requestDefaultAgent` checks
+  for null instead of dereferencing.
 * **`mediaTransportAdded` / `mediaTransportRemoved`**, the other half of what
   the player streams answer. A transport lives on its own object path below the
   device, so its arrival was neither an adapter nor a device event and was
