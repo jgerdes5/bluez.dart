@@ -1187,6 +1187,9 @@ class MockBlueZServer extends DBusClient {
   Future<void> removeMediaPlayer(MockBlueZMediaPlayerObject player) =>
       unregisterObject(player);
 
+  Future<void> removeMediaTransport(MockBlueZMediaTransportObject transport) =>
+      unregisterObject(transport);
+
   Future<MockBlueZMediaTransportObject> addMediaTransport(
       MockBlueZDeviceObject device,
       {String uuid = '0000110a-0000-1000-8000-00805f9b34fb',
@@ -3503,6 +3506,38 @@ void main() {
           ['Status']
         ]));
     expect(player.playerStatus, equals(BlueZMediaPlayerStatus.playing));
+  });
+
+  test('media transport - arrival and departure are announced', () async {
+    // A phone call tears the A2DP stream down and reconfigures it. The device
+    // itself does not change, so without these streams a client holding the
+    // transport for absolute volume is never told the new one exists - and
+    // after a call the volume echo is dead.
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    addTearDown(() async => await bluez.close());
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+    expect(client.devices[0].mediaTransports, isEmpty);
+
+    var added = client.mediaTransportAdded.first;
+    var transport = await bluez.addMediaTransport(device, volume: 64);
+    expect((await added).volume, equals(64));
+
+    var removed = client.mediaTransportRemoved.first;
+    await bluez.removeMediaTransport(transport);
+    await removed;
+    expect(client.devices[0].mediaTransports, isEmpty);
   });
 
   test('media transport - a missing UUID is null, not a throw', () async {

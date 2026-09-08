@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.2+headunit.5
+
+* **`mediaTransportAdded` / `mediaTransportRemoved`**, the other half of what
+  the player streams answer. A transport lives on its own object path below the
+  device, so its arrival was neither an adapter nor a device event and was
+  absorbed silently - and a phone call tears the A2DP stream down and
+  reconfigures it, so a client holding the transport for absolute volume was
+  never told the new one existed. After a call, the volume echo was dead.
+
 ## 0.8.2+headunit.4
 
 * **A restart of `org.bluez` is no longer absorbed silently.** Everything is

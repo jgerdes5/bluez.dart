@@ -68,6 +68,27 @@ class BlueZClient {
   final _mediaPlayerRemovedStreamController =
       StreamController<BlueZMediaPlayer>.broadcast();
 
+  /// Stream of media transports as they are added.
+  ///
+  /// The other half of what the player streams answer, and needed for the
+  /// same reason: a transport lives on its own object path below the device,
+  /// so its arrival is neither an adapter nor a device event and used to be
+  /// absorbed silently. A phone call tears the A2DP stream down and
+  /// reconfigures it, so a client holding the transport for absolute volume
+  /// has to be told when the new one arrives - nothing on the device itself
+  /// changes.
+  Stream<BlueZMediaTransport> get mediaTransportAdded =>
+      _mediaTransportAddedStreamController.stream;
+
+  /// Stream of media transports as they are removed.
+  Stream<BlueZMediaTransport> get mediaTransportRemoved =>
+      _mediaTransportRemovedStreamController.stream;
+
+  final _mediaTransportAddedStreamController =
+      StreamController<BlueZMediaTransport>.broadcast();
+  final _mediaTransportRemovedStreamController =
+      StreamController<BlueZMediaTransport>.broadcast();
+
   final _adapterAddedStreamController =
       StreamController<BlueZAdapter>.broadcast();
   final _adapterRemovedStreamController =
@@ -119,6 +140,11 @@ class BlueZClient {
             .containsKey('org.bluez.MediaPlayer1')) {
           _mediaPlayerAddedStreamController.add(BlueZMediaPlayer(this, object));
         }
+        if (signal.interfacesAndProperties
+            .containsKey('org.bluez.MediaTransport1')) {
+          _mediaTransportAddedStreamController
+              .add(BlueZMediaTransport(this, object));
+        }
       } else if (signal is DBusObjectManagerInterfacesRemovedSignal) {
         var object = _objects[signal.changedPath];
         if (object != null) {
@@ -138,6 +164,10 @@ class BlueZClient {
           if (signal.interfaces.contains('org.bluez.MediaPlayer1')) {
             _mediaPlayerRemovedStreamController
                 .add(BlueZMediaPlayer(this, object));
+          }
+          if (signal.interfaces.contains('org.bluez.MediaTransport1')) {
+            _mediaTransportRemovedStreamController
+                .add(BlueZMediaTransport(this, object));
           }
           // Closed last, so the removal above is emitted while the object can
           // still be read. Without this a listener on a removed interface is
@@ -209,6 +239,10 @@ class BlueZClient {
       }
       if (_isMediaPlayer(object)) {
         _mediaPlayerRemovedStreamController.add(BlueZMediaPlayer(this, object));
+      }
+      if (_isMediaTransport(object)) {
+        _mediaTransportRemovedStreamController
+            .add(BlueZMediaTransport(this, object));
       }
       object.release();
     }
