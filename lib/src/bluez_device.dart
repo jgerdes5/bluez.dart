@@ -21,13 +21,15 @@ class BlueZDevice {
   BlueZDevice(this._client, this._object);
 
   /// Stream of property names as their values change.
-  Stream<List<String>> get propertiesChanged {
-    var interface = _object.interfaces[_deviceInterfaceName];
-    if (interface == null) {
-      throw 'BlueZ device missing $_deviceInterfaceName interface';
-    }
-    return interface.propertiesChangedStreamController.stream;
-  }
+  ///
+  /// Empty rather than throwing for an object with no `Device1` - which is
+  /// what a device being removed looks like for a moment. This is read while
+  /// building subscriptions, often from inside another stream handler, and a
+  /// bare `throw` there kills the handler that is running and tells nobody.
+  Stream<List<String>> get propertiesChanged =>
+      _object.interfaces[_deviceInterfaceName]
+          ?.propertiesChangedStreamController.stream ??
+      const Stream.empty();
 
   /// Connect to this device.
   Future<void> connect() async {

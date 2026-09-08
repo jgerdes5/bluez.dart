@@ -41,6 +41,7 @@ class BlueZClient {
 
   // Subscription to object manager signals.
   StreamSubscription? _objectManagerSubscription;
+  StreamSubscription? _nameOwnerSubscription;
 
   /// Stream of media players as they are added.
   ///
@@ -156,7 +157,24 @@ class BlueZClient {
       }
     });
 
-    // Find all the objects exported.
+    // bluetoothd restarting, or crashing and being restarted by systemd.
+    //
+    // Everything is re-announced on paths already in the cache, so
+    // `InterfacesAdded` takes the update path and notifies nobody - and
+    // devices the new bluetoothd has never heard of are never removed. The
+    // client was left reporting the state from before the restart: a phone
+    // marked connected that is not, and rows for devices that no longer
+    // exist, until some unrelated property changed on each one.
+    _nameOwnerSubscription =
+        _bus.nameOwnerChanged.where((e) => e.name == 'org.bluez').listen((_) {
+      unawaited(_repopulate());
+    });
+
+    await _populate();
+  }
+
+  /// Reads every object bluetoothd exports and announces what is there.
+  Future<void> _populate() async {
     var objects = await _root.getManagedObjects();
     objects.forEach((objectPath, interfacesAndProperties) {
       _objects[objectPath] =
@@ -170,6 +188,36 @@ class BlueZClient {
       } else if (_isDevice(object)) {
         _deviceAddedStreamController.add(BlueZDevice(this, object));
       }
+    }
+  }
+
+  /// Throws the cache away and reads it again, announcing the difference.
+  ///
+  /// For a new owner of `org.bluez`. Removals are emitted before the objects
+  /// go, so a client can see what left; property streams are closed with
+  /// them, which is what tells a listener holding a subscription that its
+  /// object is gone rather than merely quiet.
+  Future<void> _repopulate() async {
+    var previous = Map.of(_objects);
+    _objects.clear();
+
+    for (var object in previous.values) {
+      if (_isAdapter(object)) {
+        _adapterRemovedStreamController.add(BlueZAdapter(this, object));
+      } else if (_isDevice(object)) {
+        _deviceRemovedStreamController.add(BlueZDevice(this, object));
+      }
+      if (_isMediaPlayer(object)) {
+        _mediaPlayerRemovedStreamController.add(BlueZMediaPlayer(this, object));
+      }
+      object.release();
+    }
+
+    try {
+      await _populate();
+    } on DBusMethodResponseException catch (_) {
+      // bluetoothd is on its way out rather than back in - the name changed
+      // owner to nobody. The next change brings us back.
     }
   }
 
@@ -264,6 +312,8 @@ class BlueZClient {
       await _objectManagerSubscription?.cancel();
       _objectManagerSubscription = null;
     }
+    await _nameOwnerSubscription?.cancel();
+    _nameOwnerSubscription = null;
     // Every per-interface property stream, so a listener that outlives the
     // client is completed rather than left waiting.
     for (var object in _objects.values) {

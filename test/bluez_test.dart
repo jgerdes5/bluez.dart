@@ -3100,6 +3100,45 @@ void main() {
     expect(done.isCompleted, isTrue);
   });
 
+  test('a bluetoothd restart is not absorbed silently', () async {
+    // Everything is re-announced on paths already in the cache, so
+    // InterfacesAdded takes the update path and notifies nobody - and devices
+    // the new bluetoothd has never heard of are never removed. The client was
+    // left reporting the state from before the restart: a phone marked
+    // connected that is not, and rows for devices that no longer exist, until
+    // some unrelated property happened to change on each one.
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    await bluez.addDevice(adapter, address: 'DC:E5:5B:66:AC:96');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+    expect(client.devices, hasLength(1));
+
+    var removed = client.deviceRemoved.first;
+    var added = client.deviceAdded.first;
+
+    // bluetoothd goes, and comes back knowing about a different device.
+    await bluez.close();
+    var restarted = MockBlueZServer(clientAddress);
+    await restarted.start();
+    addTearDown(() async => await restarted.close());
+    var newAdapter = await restarted.addAdapter('hci0');
+    await restarted.addDevice(newAdapter, address: '00:11:22:33:44:55');
+
+    // Both directions are announced, and the list is the new bluetoothd's.
+    expect((await removed).address, equals('DC:E5:5B:66:AC:96'));
+    await added;
+    expect(client.devices.map((d) => d.address), ['00:11:22:33:44:55']);
+  });
+
   test('awaitDevice - answers for a path the cache has not seen', () async {
     // What an agent handler needs. InterfacesAdded is delivered
     // asynchronously while an Agent1 call is dispatched synchronously from the
@@ -3464,6 +3503,30 @@ void main() {
           ['Status']
         ]));
     expect(player.playerStatus, equals(BlueZMediaPlayerStatus.playing));
+  });
+
+  test('media transport - a missing UUID is null, not a throw', () async {
+    // Read while a transport is being attached, from inside a stream handler:
+    // a FormatException there aborts the pass, leaves the caller's watches
+    // half-attached, and is raised where nothing is listening for it.
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    addTearDown(() async => await bluez.close());
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    await bluez.addMediaTransport(device, uuid: '');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    expect(client.devices[0].mediaTransports.single.uuid, isNull);
   });
 
   test('media transport - codec and volume', () async {

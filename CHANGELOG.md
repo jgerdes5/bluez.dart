@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.2+headunit.4
+
+* **A restart of `org.bluez` is no longer absorbed silently.** Everything is
+  re-announced on paths already in the cache, so `InterfacesAdded` took the
+  update path and notified nobody, and devices the new daemon had never heard
+  of were never removed - leaving the client reporting the state from before
+  the restart until some unrelated property changed on each object. The client
+  now watches `NameOwnerChanged` for the name, announces the removals, closes
+  the property streams and reads the world again.
+* **`BlueZMediaTransport.uuid` is nullable** instead of throwing
+  `FormatException` on a missing or malformed value. It is read while a
+  transport is being attached, from inside a stream handler, where a throw
+  aborts the pass and is raised with nothing listening.
+* **`propertiesChanged` on a device or a transport whose interface has gone
+  yields an empty stream** rather than throwing a bare `String`. Same reason:
+  these are read while building subscriptions, often from inside another
+  handler.
+
 ## 0.8.2+headunit.3
 
 * **An `org.bluez.Agent1` handler can no longer fail without answering.** They

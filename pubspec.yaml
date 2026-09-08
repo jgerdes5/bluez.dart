@@ -1,5 +1,5 @@
 name: bluez
-version: 0.8.2+headunit.3
+version: 0.8.2+headunit.4
 
 description:
   Provides a client to connect to BlueZ - the Linux Bluetooth stack.

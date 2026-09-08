@@ -29,13 +29,14 @@ class BlueZMediaTransport {
   late DBusObjectPath path = _object.path;
 
   /// Stream of property names as their values change.
-  Stream<List<String>> get propertiesChanged {
-    var interface = _object.interfaces[_transportInterfaceName];
-    if (interface == null) {
-      throw 'BlueZ object missing $_transportInterfaceName interface';
-    }
-    return interface.propertiesChangedStreamController.stream;
-  }
+  /// An object with no `MediaTransport1` yields an empty stream rather than
+  /// throwing: this is read while attaching, from inside a stream handler,
+  /// where a bare `throw` of a `String` kills the subscription that is
+  /// running and tells nobody.
+  Stream<List<String>> get propertiesChanged =>
+      _object.interfaces[_transportInterfaceName]
+          ?.propertiesChangedStreamController.stream ??
+      const Stream.empty();
 
   /// The device this stream belongs to.
   BlueZDevice? get device {
@@ -43,9 +44,25 @@ class BlueZMediaTransport {
     return path == null ? null : _client.getDevice(path);
   }
 
-  /// The profile UUID this stream serves, e.g. A2DP Source or Sink.
-  BlueZUUID get uuid => BlueZUUID.fromString(
-      _object.getStringProperty(_transportInterfaceName, 'UUID') ?? '');
+  /// The profile UUID this stream serves, e.g. A2DP Source or Sink, or null.
+  ///
+  /// Nullable rather than throwing on a missing or malformed value.
+  /// `BlueZUUID.fromString` raises `FormatException` on an empty string, and
+  /// this getter is read from inside stream handlers while a transport is
+  /// being attached - so a transport announced without a `UUID` used to abort
+  /// the whole pass, leaving the caller's watches half-attached and raising an
+  /// error nothing was there to catch.
+  BlueZUUID? get uuid {
+    var value = _object.getStringProperty(_transportInterfaceName, 'UUID');
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    try {
+      return BlueZUUID.fromString(value);
+    } on FormatException {
+      return null;
+    }
+  }
 
   /// The negotiated A2DP codec: 0x00 SBC, 0x01 MPEG-1,2 Audio, 0x02
   /// MPEG-2,4 AAC, 0x04 ATRAC, 0xff vendor-specific (aptX, LDAC,
