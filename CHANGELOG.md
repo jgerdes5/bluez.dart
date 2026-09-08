@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.2+headunit.1
+
+Fork release. Upstream 0.8.2 plus:
+
+* Complete `org.bluez.MediaPlayer1`: Name, Type, Subtype, Device, Playlist,
+  Browsable, Searchable, the writable Equalizer/Repeat/Shuffle/Scan settings
+  with typed enums, and FastForward/Rewind/Press/Hold/Release.
+* Add `BlueZMediaPlayer.readPosition()`, which reads Position from the daemon
+  rather than the property cache. BlueZ signals it only on a seek, so the
+  cached value is stale after a play or pause.
+* Add `BlueZMediaPlayerTrack` and `BlueZMediaPlayer.trackInfo`, replacing the
+  untyped metadata map. Fields are parsed independently, so a value of an
+  unexpected signature no longer discards the whole track.
+* Add `org.bluez.MediaTransport1` as `BlueZMediaTransport`, with the
+  negotiated codec and AVRCP absolute volume, plus
+  `BlueZDevice.mediaTransports`.
+* Fix `BlueZObject.updateInterfaces` discarding an interface's
+  propertiesChanged stream controller when BlueZ re-announces a path it has
+  already published, which silently killed every existing listener.
+* `BlueZDevice.mediaPlayer` returns null instead of null-asserting when the
+  device has exported no player.
+
 ## 0.8.2
 
 * Add BlueZGattCharacteristic.mtu.
