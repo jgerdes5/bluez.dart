@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.8.2+headunit.3
+
+* **An `org.bluez.Agent1` handler can no longer fail without answering.** They
+  all asserted the device was already cached, with `!`. `InterfacesAdded` is
+  delivered asynchronously while an agent call is dispatched synchronously from
+  the same socket read, so for a device bluetoothd has just discovered - an
+  inbound pairing - the `!` threw. package:dbus writes the reply only after the
+  handler completes and swallows the error, so bluetoothd waited for ever and
+  the pairing died with nothing logged. `awaitDevice` asks the daemon on a
+  cache miss, and the dispatch is guarded so every call gets a reply. The
+  cached path stays synchronous, because an agent may hold its response open
+  until `Cancel` arrives and a microtask of delay would let a `Cancel` race it.
+* **`mediaPlayerAdded` / `mediaPlayerRemoved`.** A player is announced as
+  `InterfacesAdded` on a new object path below the device, which is neither an
+  adapter nor a device, so its arrival was previously unobservable - and a
+  device's `PropertiesChanged` cannot carry it, those streams being per
+  interface. AVRCP metadata arrives after `Connected`, so there was nothing to
+  attach to at the moment there was something to show.
+* **`BlueZDevice.mediaPlayer` finds the player by interface** below the device,
+  not by `MediaControl1.Player`. That property's `?? <device>/player0` fallback
+  is gone: BlueZ increments the number across AVRCP reconnects, so the guess
+  points at a dead object for the rest of the session. `player` is now
+  nullable, and `BlueZMediaPlayer.path` is exposed so one player object can be
+  told from another. `getMediaPlayer` verifies the interface, as
+  `getMediaTransports` already did.
+* **Removing an interface closes its property stream.** A subscription to a
+  controller that can never fire again, and never completes, is a listener that
+  will never re-attach - which is what happened to absolute volume every time
+  an A2DP stream was torn down and reconfigured, as a call over HFP does.
+
 ## 0.8.2+headunit.2
 
 * Add `BlueZMediaTransport.path`, matching `BlueZDevice.path`. A caller holding
