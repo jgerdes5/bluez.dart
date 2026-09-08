@@ -43,7 +43,28 @@ class BlueZObject extends DBusRemoteObject {
 
   void removeInterfaces(List<String> interfaceNames) {
     for (var interfaceName in interfaceNames) {
-      interfaces.remove(interfaceName);
+      interfaces.remove(interfaceName)?.close();
+    }
+  }
+
+  /// Closes the property streams of [interfaceNames] without forgetting their
+  /// values.
+  ///
+  /// For an object being dropped whole: the caller still wants to read the
+  /// last known properties while announcing the removal, but any listener has
+  /// to be told the stream is finished. A subscription left open on a
+  /// controller that can never fire again is a listener that will never
+  /// re-attach.
+  void releaseInterfaces(List<String> interfaceNames) {
+    for (var interfaceName in interfaceNames) {
+      interfaces[interfaceName]?.close();
+    }
+  }
+
+  /// Closes every property stream this object owns.
+  void release() {
+    for (var interface in interfaces.values) {
+      interface.close();
     }
   }
 
@@ -259,6 +280,11 @@ class _BlueZInterface {
   void updateProperties(Map<String, DBusValue> changedProperties) {
     properties.addAll(changedProperties);
     propertiesChangedStreamController.add(changedProperties.keys.toList());
+  }
+
+  /// Ends the property stream, for an interface that has gone away.
+  void close() {
+    propertiesChangedStreamController.close();
   }
 
   /// Replaces every property, without notifying.

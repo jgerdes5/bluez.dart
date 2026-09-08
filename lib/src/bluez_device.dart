@@ -225,8 +225,14 @@ class BlueZDevice {
   /// A device that is connected but has not started playing has no
   /// MediaPlayer1 object at all, and one can come and go across an AVRCP
   /// reconnect, so absence is an ordinary state rather than an error.
-  BlueZMediaPlayer? get mediaPlayer =>
-      _client.getMediaPlayer(mediaControl.player);
+  /// The device's AVRCP player, if BlueZ has one for it.
+  ///
+  /// Found by looking for the object below this device that carries
+  /// `org.bluez.MediaPlayer1`, rather than by the path in
+  /// `org.bluez.MediaControl1.Player`: that interface is deprecated and often
+  /// absent, and BlueZ increments the player number across AVRCP reconnects,
+  /// so a device's player can be `player1` or `player2`.
+  BlueZMediaPlayer? get mediaPlayer => _client.getMediaPlayerFor(_object.path);
 
   /// The audio streams currently configured with this device.
   List<BlueZMediaTransport> get mediaTransports =>

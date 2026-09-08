@@ -3,11 +3,24 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:bluez/bluez.dart';
+// The internal extension, for the one test that exercises the lookup an agent
+// handler depends on. Not part of the public API, and only the plugin's own
+// code and its tests have any business with it.
+import 'package:bluez/src/bluez_client.dart';
 import 'package:dbus/dbus.dart';
 import 'package:test/test.dart';
 
 class MockBlueZObject extends DBusObject {
   MockBlueZObject(DBusObjectPath path) : super(path);
+
+  /// The mock answered no `org.freedesktop.DBus.Properties.GetAll` at all,
+  /// which bluetoothd certainly does - every BlueZ object supports it. A
+  /// client that has to ask about an object before its `InterfacesAdded` has
+  /// been processed depends on it, so the mock has to be able to answer.
+  @override
+  Future<DBusMethodResponse> getAllProperties(String interface) async =>
+      DBusGetAllPropertiesResponse(
+          interfacesAndProperties[interface] ?? <String, DBusValue>{});
 }
 
 InternetAddress makeRandomUnixAddress() {
@@ -3011,6 +3024,114 @@ void main() {
     var b = bp.batteries.values.first;
     expect(b.percentage, equals(100));
     expect(b.source, equals('Dummy Battery'));
+  });
+
+  test('media player - arrival is announced', () async {
+    // The only way a client can learn that a device's AVRCP player has
+    // appeared. BlueZ announces it as InterfacesAdded on a *new* path below
+    // the device, which is neither an adapter nor a device, so it used to be
+    // cached silently with nothing told - and the device's own
+    // PropertiesChanged cannot carry it, because those streams are per
+    // interface and the player is a different object. Metadata lands a second
+    // or two after Connected, so without this there is nothing to attach to
+    // at the moment there is finally something to show.
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    addTearDown(() async => await bluez.close());
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    // Connected, and no player yet - the state a phone is in for the first
+    // moment or two.
+    expect(client.devices[0].mediaPlayer, isNull);
+
+    var announced = client.mediaPlayerAdded.first;
+    await bluez.addMediaPlayer(device, status: 'playing');
+
+    var player = await announced;
+    expect(player.playerStatus, equals(BlueZMediaPlayerStatus.playing));
+    // And findable from the device, by interface rather than by a guessed
+    // path.
+    expect(client.devices[0].mediaPlayer, isNotNull);
+    expect(client.devices[0].mediaPlayer!.path, equals(player.path));
+  });
+
+  test('media player - a departure closes the property stream', () async {
+    // A listener left holding a subscription to a controller that can never
+    // fire again, and never completes, is a listener that will never
+    // re-attach. An A2DP stream torn down and reconfigured - which is what a
+    // call over HFP does - used to do exactly that.
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    addTearDown(() async => await bluez.close());
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    var mockPlayer = await bluez.addMediaPlayer(device, status: 'playing');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var player = client.devices[0].mediaPlayer!;
+    var done = Completer<void>();
+    player.propertiesChanged.listen((_) {}, onDone: done.complete);
+
+    var removed = client.mediaPlayerRemoved.first;
+    await bluez.removeMediaPlayer(mockPlayer);
+    await removed;
+
+    await done.future;
+    expect(done.isCompleted, isTrue);
+  });
+
+  test('awaitDevice - answers for a path the cache has not seen', () async {
+    // What an agent handler needs. InterfacesAdded is delivered
+    // asynchronously while an Agent1 call is dispatched synchronously from the
+    // same socket read, so for a device bluetoothd has just discovered the
+    // cache can still be empty - and a handler that throws there sends no
+    // reply at all, leaving bluetoothd waiting for ever.
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    addTearDown(() async => await bluez.close());
+    var adapter = await bluez.addAdapter('hci0');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var path = DBusObjectPath('/org/bluez/hci0/dev_DC_E5_5B_66_AC_96');
+    // Not in the cache: the client connected before this device existed, and
+    // we do not let the signal be processed first.
+    expect(client.getDevice(path), isNull);
+    await bluez.addDevice(adapter, address: 'DC:E5:5B:66:AC:96');
+
+    var device = await client.awaitDevice(path);
+    expect(device, isNotNull);
+    expect(device!.address, equals('DC:E5:5B:66:AC:96'));
+
+    // A path that is not a device at all answers null rather than throwing.
+    expect(await client.awaitDevice(DBusObjectPath('/org/bluez/nope')), isNull);
   });
 
   test('media player - properties', () async {

@@ -42,6 +42,31 @@ class BlueZClient {
   // Subscription to object manager signals.
   StreamSubscription? _objectManagerSubscription;
 
+  /// Stream of media players as they are added.
+  ///
+  /// The only way to learn that a device's AVRCP player has appeared. BlueZ
+  /// announces it as `InterfacesAdded` on a **new** object path below the
+  /// device - `/org/bluez/hci0/dev_XX/playerN` - which is neither an adapter
+  /// nor a device, so it used to be absorbed silently: the object was cached
+  /// and nothing was told. A client watching the device's own
+  /// `PropertiesChanged` never hears it either, because those streams are per
+  /// interface and the player is a different object.
+  ///
+  /// Metadata usually arrives a second or two after `Connected`, so without
+  /// this a media UI has nothing to attach to at the moment there is finally
+  /// something to show.
+  Stream<BlueZMediaPlayer> get mediaPlayerAdded =>
+      _mediaPlayerAddedStreamController.stream;
+
+  /// Stream of media players as they are removed.
+  Stream<BlueZMediaPlayer> get mediaPlayerRemoved =>
+      _mediaPlayerRemovedStreamController.stream;
+
+  final _mediaPlayerAddedStreamController =
+      StreamController<BlueZMediaPlayer>.broadcast();
+  final _mediaPlayerRemovedStreamController =
+      StreamController<BlueZMediaPlayer>.broadcast();
+
   final _adapterAddedStreamController =
       StreamController<BlueZAdapter>.broadcast();
   final _adapterRemovedStreamController =
@@ -86,6 +111,13 @@ class BlueZClient {
             _deviceAddedStreamController.add(BlueZDevice(this, object));
           }
         }
+        // Announced whether the object is new or gained the interface, and
+        // separately from the adapter/device branches above: a player arrives
+        // on its own path below a device that already exists.
+        if (signal.interfacesAndProperties
+            .containsKey('org.bluez.MediaPlayer1')) {
+          _mediaPlayerAddedStreamController.add(BlueZMediaPlayer(this, object));
+        }
       } else if (signal is DBusObjectManagerInterfacesRemovedSignal) {
         var object = _objects[signal.changedPath];
         if (object != null) {
@@ -102,6 +134,18 @@ class BlueZClient {
           } else if (signal.interfaces.contains('org.bluez.Device1')) {
             _deviceRemovedStreamController.add(BlueZDevice(this, object));
           }
+          if (signal.interfaces.contains('org.bluez.MediaPlayer1')) {
+            _mediaPlayerRemovedStreamController
+                .add(BlueZMediaPlayer(this, object));
+          }
+          // Closed last, so the removal above is emitted while the object can
+          // still be read. Without this a listener on a removed interface is
+          // left holding a subscription to a controller that can never fire
+          // again and never completes - so nothing tells it to re-attach when
+          // the interface comes back. An A2DP stream torn down and
+          // reconfigured, which is what a call over HFP does, hit this every
+          // time.
+          object.releaseInterfaces(signal.interfaces);
         }
       } else if (signal is DBusPropertiesChangedSignal) {
         var object = _objects[signal.path];
@@ -220,6 +264,11 @@ class BlueZClient {
       await _objectManagerSubscription?.cancel();
       _objectManagerSubscription = null;
     }
+    // Every per-interface property stream, so a listener that outlives the
+    // client is completed rather than left waiting.
+    for (var object in _objects.values) {
+      object.release();
+    }
     if (_closeBus) {
       await _bus.close();
     }
@@ -246,6 +295,48 @@ extension BluezClientInternalExtension on BlueZClient {
     return object == null ? null : BlueZDevice(this, object);
   }
 
+  /// Looks a device up, asking the daemon if the object manager has not
+  /// caught up yet.
+  ///
+  /// [getDevice] answers from the cache, and the cache is filled from
+  /// `InterfacesAdded`, which is delivered **asynchronously**. An
+  /// `org.bluez.Agent1` call about a device is dispatched **synchronously**
+  /// from the same socket read. So when bluetoothd announces a device it has
+  /// never seen before and asks the agent about it in the same breath - which
+  /// is exactly what an inbound pairing looks like - the cache can still be
+  /// empty when the agent is called.
+  ///
+  /// An agent handler must never fail on that: package:dbus writes the reply
+  /// only after the handler's future completes, so a throw means bluetoothd
+  /// waits for a reply that never comes and the pairing dies with nothing on
+  /// screen and nothing in the log.
+  ///
+  /// Fetching is safe here because the caller is inside a method handler that
+  /// bluetoothd is already waiting on.
+  Future<BlueZDevice?> awaitDevice(DBusObjectPath objectPath) async {
+    var known = getDevice(objectPath);
+    if (known != null) {
+      return known;
+    }
+    try {
+      var remote = DBusRemoteObject(_bus, name: 'org.bluez', path: objectPath);
+      var properties = await remote.getAllProperties('org.bluez.Device1');
+      if (properties.isEmpty) {
+        return null;
+      }
+      var object =
+          BlueZObject(_bus, objectPath, {'org.bluez.Device1': properties});
+      _objects[objectPath] = object;
+      // Announced, so a client that keeps its own list still learns about it:
+      // the InterfacesAdded that follows will find the path already cached
+      // and take the update path, which emits nothing.
+      _deviceAddedStreamController.add(BlueZDevice(this, object));
+      return BlueZDevice(this, object);
+    } on DBusMethodResponseException catch (_) {
+      return null;
+    }
+  }
+
   BlueZAdapter? getAdapter(DBusObjectPath objectPath) {
     var object = _objects[objectPath];
     return object == null ? null : BlueZAdapter(this, object);
@@ -253,7 +344,31 @@ extension BluezClientInternalExtension on BlueZClient {
 
   BlueZMediaPlayer? getMediaPlayer(DBusObjectPath objectPath) {
     var object = _objects[objectPath];
-    return object == null ? null : BlueZMediaPlayer(this, object);
+    if (object == null || !_isMediaPlayer(object)) {
+      return null;
+    }
+    return BlueZMediaPlayer(this, object);
+  }
+
+  /// The media player below [parentPath], if there is one.
+  ///
+  /// Found by interface, the way [getMediaTransports] works, rather than by
+  /// the path in `org.bluez.MediaControl1.Player`. Two reasons: that interface
+  /// is deprecated and often absent, and BlueZ increments the player number
+  /// across AVRCP reconnects - so a device's player can be `player1` or
+  /// `player2`, and anything that assumes `player0` points at an object that
+  /// no longer exists for the rest of the session.
+  BlueZMediaPlayer? getMediaPlayerFor(DBusObjectPath parentPath) {
+    for (var object in _objects.values) {
+      if (object.path.isInNamespace(parentPath) && _isMediaPlayer(object)) {
+        return BlueZMediaPlayer(this, object);
+      }
+    }
+    return null;
+  }
+
+  bool _isMediaPlayer(BlueZObject object) {
+    return object.interfaces.containsKey('org.bluez.MediaPlayer1');
   }
 
   List<BlueZMediaTransport> getMediaTransports(DBusObjectPath parentPath) {

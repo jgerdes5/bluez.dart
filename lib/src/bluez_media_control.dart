@@ -55,8 +55,13 @@ class BlueZMediaControl {
   bool get connected =>
       _object.getBooleanProperty(_deviceInterfaceName, 'Connected') ?? false;
 
-  /// Get Player object path
-  DBusObjectPath get player =>
-      _object.getObjectPathProperty(_deviceInterfaceName, 'Player') ??
-      DBusObjectPath('${_object.path.asString()}/player0');
+  /// The player object path this deprecated interface reports, if any.
+  ///
+  /// Nullable, and no longer guessed. It used to fall back to
+  /// `<device>/player0`, which is a path that may well not exist: BlueZ
+  /// increments the number across AVRCP reconnects, so after one the guess
+  /// points at a dead object for ever. Use [BlueZDevice.mediaPlayer], which
+  /// finds the player by interface.
+  DBusObjectPath? get player =>
+      _object.getObjectPathProperty(_deviceInterfaceName, 'Player');
 }

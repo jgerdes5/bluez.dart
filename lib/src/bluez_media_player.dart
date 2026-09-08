@@ -91,6 +91,13 @@ class BlueZMediaPlayer {
 
   BlueZMediaPlayer(this._client, this._object);
 
+  /// The player's own object path.
+  ///
+  /// Exposed so a client can tell one player object from another - BlueZ
+  /// increments the number across AVRCP reconnects, and a subscription to the
+  /// old object goes quiet rather than failing.
+  DBusObjectPath get path => _object.path;
+
   /// Stream of property names as their values change.
   Stream<List<String>> get propertiesChanged {
     var interface = _object.interfaces[_mediaPlayerInterfaceName];
