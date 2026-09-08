@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2+headunit.2
+
+* Add `BlueZMediaTransport.path`, matching `BlueZDevice.path`. A caller holding
+  a subscription needs to know when the object underneath it has been
+  replaced, and `Endpoint` is no substitute: BlueZ marks it experimental, so
+  it is usually absent and every transport would compare equal.
+
 ## 0.8.2+headunit.1
 
 Fork release. Upstream 0.8.2 plus:

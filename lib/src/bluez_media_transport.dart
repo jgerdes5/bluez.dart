@@ -20,6 +20,14 @@ class BlueZMediaTransport {
 
   BlueZMediaTransport(this._client, this._object);
 
+  /// This transport's D-Bus object path.
+  ///
+  /// Exposed because a caller holding a subscription needs to know when the
+  /// object underneath it has been replaced - a device can drop and
+  /// reconfigure its stream - and `Endpoint` is no substitute: BlueZ marks it
+  /// experimental, so it is usually absent.
+  late DBusObjectPath path = _object.path;
+
   /// Stream of property names as their values change.
   Stream<List<String>> get propertiesChanged {
     var interface = _object.interfaces[_transportInterfaceName];

@@ -3377,6 +3377,10 @@ void main() {
     expect(transport.delay, equals(1500));
     expect(transport.volume, equals(96));
     expect(transport.device?.address, equals('DC:E5:5B:66:AC:96'));
+    // The object path, so a caller can tell a replaced transport from the
+    // same one. Endpoint is no substitute - BlueZ marks it experimental and
+    // it is usually absent, which would make every transport compare equal.
+    expect(transport.path, equals(mock.path));
     expect(transport.uuid,
         equals(BlueZUUID.fromString('0000110a-0000-1000-8000-00805f9b34fb')));
 
