@@ -57,5 +57,6 @@ class BlueZMediaControl {
 
   /// Get Player object path
   DBusObjectPath get player =>
-      _object.getObjectPathProperty(_deviceInterfaceName, 'Player') ?? DBusObjectPath('${_object.path.asString()}/player0');
+      _object.getObjectPathProperty(_deviceInterfaceName, 'Player') ??
+      DBusObjectPath('${_object.path.asString()}/player0');
 }

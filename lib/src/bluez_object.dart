@@ -15,7 +15,19 @@ class BlueZObject extends DBusRemoteObject {
   void updateInterfaces(
       Map<String, Map<String, DBusValue>> interfacesAndProperties) {
     interfacesAndProperties.forEach((interfaceName, properties) {
-      interfaces[interfaceName] = _BlueZInterface(properties);
+      var interface = interfaces[interfaceName];
+      if (interface != null) {
+        // Keep the existing interface so that anything listening to its
+        // propertiesChanged stream keeps receiving events. BlueZ re-announces
+        // InterfacesAdded for a path it has already published - a media player
+        // that comes back after an AVRCP reconnect is the common case - and
+        // replacing the interface here dropped its stream controller on the
+        // floor, leaving every listener silently attached to an orphan that
+        // could never fire again.
+        interface.replaceProperties(properties);
+      } else {
+        interfaces[interfaceName] = _BlueZInterface(properties);
+      }
     });
   }
 
@@ -84,6 +96,18 @@ class BlueZObject extends DBusRemoteObject {
     }
 
     return value.asByteArray().toList();
+  }
+
+  /// Gets a cached byte property, or returns null if not present or not the correct type.
+  int? getByteProperty(String interface, String name) {
+    var value = getCachedProperty(interface, name);
+    if (value == null) {
+      return null;
+    }
+    if (value.signature != DBusSignature('y')) {
+      return null;
+    }
+    return value.asByte();
   }
 
   /// Gets a cached signed 16 bit integer property, or returns null if not present or not the correct type.
@@ -235,5 +259,19 @@ class _BlueZInterface {
   void updateProperties(Map<String, DBusValue> changedProperties) {
     properties.addAll(changedProperties);
     propertiesChangedStreamController.add(changedProperties.keys.toList());
+  }
+
+  /// Replaces every property, without notifying.
+  ///
+  /// This is a full re-announcement of the interface rather than a change
+  /// signal, so listeners are not told: a PropertiesChanged carrying every
+  /// property would look like everything had changed at once.
+  void replaceProperties(Map<String, DBusValue> newProperties) {
+    if (identical(properties, newProperties)) {
+      return;
+    }
+    properties
+      ..clear()
+      ..addAll(newProperties);
   }
 }

@@ -8,6 +8,7 @@ import 'package:bluez/src/bluez_enums.dart';
 import 'package:bluez/src/bluez_gatt_descriptor.dart';
 import 'package:bluez/src/bluez_gatt_service.dart';
 import 'package:bluez/src/bluez_media_player.dart';
+import 'package:bluez/src/bluez_media_transport.dart';
 import 'package:bluez/src/bluez_object.dart';
 import 'package:dbus/dbus.dart';
 import 'package:bluez/src/bluez_agent.dart';
@@ -253,6 +254,20 @@ extension BluezClientInternalExtension on BlueZClient {
   BlueZMediaPlayer? getMediaPlayer(DBusObjectPath objectPath) {
     var object = _objects[objectPath];
     return object == null ? null : BlueZMediaPlayer(this, object);
+  }
+
+  List<BlueZMediaTransport> getMediaTransports(DBusObjectPath parentPath) {
+    var transports = <BlueZMediaTransport>[];
+    for (var object in _objects.values) {
+      if (object.path.isInNamespace(parentPath) && _isMediaTransport(object)) {
+        transports.add(BlueZMediaTransport(this, object));
+      }
+    }
+    return transports;
+  }
+
+  bool _isMediaTransport(BlueZObject object) {
+    return object.interfaces.containsKey('org.bluez.MediaTransport1');
   }
 
   List<BlueZGattService> getGattServices(DBusObjectPath parentPath) {

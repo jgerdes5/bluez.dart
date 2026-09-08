@@ -815,6 +815,205 @@ class MockBlueZGattDescriptorObject extends MockBlueZObject {
   }
 }
 
+class MockBlueZMediaPlayerObject extends MockBlueZObject {
+  final MockBlueZDeviceObject device;
+
+  String status;
+  int position;
+
+  /// What a live Properties.Get for Position answers, when it should differ
+  /// from the cached [position] - which is how BlueZ really behaves, since it
+  /// computes the property on read but only signals it on a seek.
+  int? livePosition;
+
+  Map<String, DBusValue> track;
+  String name;
+  String type;
+  String subtype;
+  bool browsable;
+  bool searchable;
+  String? equalizer;
+  String? repeat;
+  String? shuffle;
+  String? scan;
+
+  /// Every method call received, in order, so a test can assert what went out
+  /// rather than only what came back.
+  final calls = <String>[];
+
+  MockBlueZMediaPlayerObject(
+    this.device, {
+    this.status = 'stopped',
+    this.position = 0,
+    this.livePosition,
+    this.track = const {},
+    this.name = '',
+    this.type = '',
+    this.subtype = '',
+    this.browsable = false,
+    this.searchable = false,
+    this.equalizer,
+    this.repeat,
+    this.shuffle,
+    this.scan,
+  }) : super(DBusObjectPath('${device.path.value}/player0'));
+
+  @override
+  Map<String, Map<String, DBusValue>> get interfacesAndProperties =>
+      {'org.bluez.MediaPlayer1': _properties()};
+
+  Map<String, DBusValue> _properties() => {
+        'Device': device.path,
+        'Name': DBusString(name),
+        'Type': DBusString(type),
+        'Subtype': DBusString(subtype),
+        'Status': DBusString(status),
+        'Position': DBusUint32(position),
+        'Browsable': DBusBoolean(browsable),
+        'Searchable': DBusBoolean(searchable),
+        if (equalizer != null) 'Equalizer': DBusString(equalizer!),
+        if (repeat != null) 'Repeat': DBusString(repeat!),
+        if (shuffle != null) 'Shuffle': DBusString(shuffle!),
+        if (scan != null) 'Scan': DBusString(scan!),
+        'Track': DBusDict(
+            DBusSignature('s'),
+            DBusSignature('v'),
+            track.map(
+                (key, value) => MapEntry(DBusString(key), DBusVariant(value)))),
+      };
+
+  @override
+  Future<DBusMethodResponse> getProperty(String interface, String name) async {
+    if (interface != 'org.bluez.MediaPlayer1') {
+      return DBusMethodErrorResponse.unknownInterface();
+    }
+    if (name == 'Position') {
+      return DBusGetPropertyResponse(DBusUint32(livePosition ?? position));
+    }
+    var value = _properties()[name];
+    return value == null
+        ? DBusMethodErrorResponse.unknownProperty()
+        : DBusGetPropertyResponse(value);
+  }
+
+  @override
+  Future<DBusMethodResponse> setProperty(
+      String interface, String name, DBusValue value) async {
+    if (interface != 'org.bluez.MediaPlayer1') {
+      return DBusMethodErrorResponse.unknownInterface();
+    }
+    switch (name) {
+      case 'Equalizer':
+        equalizer = value.asString();
+        break;
+      case 'Repeat':
+        repeat = value.asString();
+        break;
+      case 'Shuffle':
+        shuffle = value.asString();
+        break;
+      case 'Scan':
+        scan = value.asString();
+        break;
+      default:
+        return DBusMethodErrorResponse.propertyReadOnly();
+    }
+    await emitPropertiesChanged('org.bluez.MediaPlayer1',
+        changedProperties: {name: value});
+    return DBusMethodSuccessResponse();
+  }
+
+  @override
+  Future<DBusMethodResponse> handleMethodCall(DBusMethodCall methodCall) async {
+    if (methodCall.interface != 'org.bluez.MediaPlayer1') {
+      return DBusMethodErrorResponse.unknownInterface();
+    }
+    switch (methodCall.name) {
+      case 'Play':
+      case 'Pause':
+      case 'Stop':
+      case 'Next':
+      case 'Previous':
+      case 'FastForward':
+      case 'Rewind':
+      case 'Release':
+        calls.add(methodCall.name);
+        return DBusMethodSuccessResponse();
+      case 'Press':
+      case 'Hold':
+        calls.add('${methodCall.name}:${methodCall.values[0].asByte()}');
+        return DBusMethodSuccessResponse();
+      default:
+        return DBusMethodErrorResponse.unknownMethod();
+    }
+  }
+
+  /// Pushes a change the way BlueZ would, so a listener sees it.
+  Future<void> change(Map<String, DBusValue> changed) async {
+    for (var entry in changed.entries) {
+      switch (entry.key) {
+        case 'Status':
+          status = entry.value.asString();
+          break;
+        case 'Position':
+          position = entry.value.asUint32();
+          break;
+      }
+    }
+    await emitPropertiesChanged('org.bluez.MediaPlayer1',
+        changedProperties: changed);
+  }
+}
+
+class MockBlueZMediaTransportObject extends MockBlueZObject {
+  final MockBlueZDeviceObject device;
+
+  final String uuid;
+  final int codec;
+  final List<int> configuration;
+  final String state;
+  final int? delay;
+  int? volume;
+
+  MockBlueZMediaTransportObject(
+    this.device, {
+    this.uuid = '0000110a-0000-1000-8000-00805f9b34fb',
+    this.codec = 0,
+    this.configuration = const [],
+    this.state = 'idle',
+    this.delay,
+    this.volume,
+  }) : super(DBusObjectPath('${device.path.value}/fd0'));
+
+  @override
+  Map<String, Map<String, DBusValue>> get interfacesAndProperties => {
+        'org.bluez.MediaTransport1': {
+          'Device': device.path,
+          'UUID': DBusString(uuid),
+          'Codec': DBusByte(codec),
+          'Configuration': DBusArray.byte(configuration),
+          'State': DBusString(state),
+          if (delay != null) 'Delay': DBusUint16(delay!),
+          if (volume != null) 'Volume': DBusUint16(volume!),
+        }
+      };
+
+  @override
+  Future<DBusMethodResponse> setProperty(
+      String interface, String name, DBusValue value) async {
+    if (interface != 'org.bluez.MediaTransport1') {
+      return DBusMethodErrorResponse.unknownInterface();
+    }
+    if (name != 'Volume') {
+      return DBusMethodErrorResponse.propertyReadOnly();
+    }
+    volume = value.asUint16();
+    await emitPropertiesChanged('org.bluez.MediaTransport1',
+        changedProperties: {'Volume': value});
+    return DBusMethodSuccessResponse();
+  }
+}
+
 class MockBlueZServer extends DBusClient {
   late final DBusObject root;
 
@@ -937,6 +1136,61 @@ class MockBlueZServer extends DBusClient {
   Future<void> removeDevice(MockBlueZDeviceObject device) async {
     devices.remove(device);
     await unregisterObject(device);
+  }
+
+  Future<MockBlueZMediaPlayerObject> addMediaPlayer(
+      MockBlueZDeviceObject device,
+      {String status = 'stopped',
+      int position = 0,
+      int? livePosition,
+      Map<String, DBusValue> track = const {},
+      String name = '',
+      String type = '',
+      String subtype = '',
+      bool browsable = false,
+      bool searchable = false,
+      String? equalizer,
+      String? repeat,
+      String? shuffle,
+      String? scan}) async {
+    var player = MockBlueZMediaPlayerObject(device,
+        status: status,
+        position: position,
+        livePosition: livePosition,
+        track: track,
+        name: name,
+        type: type,
+        subtype: subtype,
+        browsable: browsable,
+        searchable: searchable,
+        equalizer: equalizer,
+        repeat: repeat,
+        shuffle: shuffle,
+        scan: scan);
+    await registerObject(player);
+    return player;
+  }
+
+  Future<void> removeMediaPlayer(MockBlueZMediaPlayerObject player) =>
+      unregisterObject(player);
+
+  Future<MockBlueZMediaTransportObject> addMediaTransport(
+      MockBlueZDeviceObject device,
+      {String uuid = '0000110a-0000-1000-8000-00805f9b34fb',
+      int codec = 0,
+      List<int> configuration = const [],
+      String state = 'idle',
+      int? delay,
+      int? volume}) async {
+    var transport = MockBlueZMediaTransportObject(device,
+        uuid: uuid,
+        codec: codec,
+        configuration: configuration,
+        state: state,
+        delay: delay,
+        volume: volume);
+    await registerObject(transport);
+    return transport;
   }
 
   Future<MockBlueZGattServiceObject> addService(
@@ -2757,5 +3011,401 @@ void main() {
     var b = bp.batteries.values.first;
     expect(b.percentage, equals(100));
     expect(b.source, equals('Dummy Battery'));
+  });
+
+  test('media player - properties', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    await bluez.addMediaPlayer(device,
+        status: 'playing',
+        position: 18000,
+        name: 'Music',
+        type: 'Audio',
+        subtype: 'Podcast',
+        browsable: true,
+        searchable: true,
+        equalizer: 'off',
+        repeat: 'singletrack',
+        shuffle: 'alltracks',
+        scan: 'off',
+        track: {
+          'Title': DBusString('Highway to Hell'),
+          'Artist': DBusString('AC/DC'),
+          'Album': DBusString('Highway to Hell'),
+          'Genre': DBusString('Rock'),
+          'TrackNumber': DBusUint32(1),
+          'NumberOfTracks': DBusUint32(10),
+          'Duration': DBusUint32(208000),
+        });
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var player = client.devices[0].mediaPlayer;
+    expect(player, isNotNull);
+    expect(player!.name, equals('Music'));
+    expect(player.type, equals('Audio'));
+    expect(player.subtype, equals('Podcast'));
+    expect(player.browsable, isTrue);
+    expect(player.searchable, isTrue);
+    expect(player.status, equals('playing'));
+    expect(player.playerStatus, equals(BlueZMediaPlayerStatus.playing));
+    expect(player.position, equals(18000));
+    expect(player.equalizer, equals(BlueZMediaPlayerEqualizer.off));
+    expect(player.repeat, equals(BlueZMediaPlayerRepeat.singleTrack));
+    expect(player.shuffle, equals(BlueZMediaPlayerShuffle.allTracks));
+    expect(player.scan, equals(BlueZMediaPlayerScan.off));
+    expect(player.device?.address, equals('DC:E5:5B:66:AC:96'));
+
+    var track = player.trackInfo;
+    expect(track.title, equals('Highway to Hell'));
+    expect(track.artist, equals('AC/DC'));
+    expect(track.album, equals('Highway to Hell'));
+    expect(track.genre, equals('Rock'));
+    expect(track.trackNumber, equals(1));
+    expect(track.numberOfTracks, equals(10));
+    expect(track.duration, equals(Duration(milliseconds: 208000)));
+  });
+
+  test('media player - a player that reports nothing', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    await bluez.addMediaPlayer(device);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    // A player with no Repeat/Shuffle/Scan properties supports none of them,
+    // which is different from having them switched off.
+    var player = client.devices[0].mediaPlayer!;
+    expect(player.repeat, isNull);
+    expect(player.shuffle, isNull);
+    expect(player.scan, isNull);
+    expect(player.equalizer, isNull);
+    expect(player.trackInfo.title, isNull);
+    expect(player.trackInfo.duration, isNull);
+  });
+
+  test('media player - a metadata field of an unexpected type is skipped',
+      () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    await bluez.addMediaPlayer(device, track: {
+      'Title': DBusString('Tom Sawyer'),
+      // Signed rather than the unsigned AVRCP specifies. The point is that
+      // this costs us TrackNumber only - it must not take Title with it.
+      'TrackNumber': DBusInt32(4),
+    });
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var track = client.devices[0].mediaPlayer!.trackInfo;
+    expect(track.title, equals('Tom Sawyer'));
+    expect(track.trackNumber, isNull);
+    // Nothing is thrown away: the raw value is still there to be inspected.
+    expect(track.properties['TrackNumber'], equals(DBusInt32(4)));
+  });
+
+  test('media player - no player object', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    // A connected device that has not started playing has no MediaPlayer1
+    // object. That is ordinary, and used to throw.
+    expect(client.devices[0].mediaPlayer, isNull);
+  });
+
+  test('media player - transport methods', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    var mock = await bluez.addMediaPlayer(device);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var player = client.devices[0].mediaPlayer!;
+    await player.play();
+    await player.pause();
+    await player.stop();
+    await player.next();
+    await player.previous();
+    await player.fastForward();
+    await player.rewind();
+    await player.press(0x44);
+    await player.hold(0x44);
+    await player.release();
+
+    expect(
+        mock.calls,
+        equals([
+          'Play',
+          'Pause',
+          'Stop',
+          'Next',
+          'Previous',
+          'FastForward',
+          'Rewind',
+          'Press:68',
+          'Hold:68',
+          'Release',
+        ]));
+  });
+
+  test('media player - settings are writable', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    var mock = await bluez.addMediaPlayer(device,
+        equalizer: 'off', repeat: 'off', shuffle: 'off', scan: 'off');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var bus = DBusClient(clientAddress);
+    addTearDown(() async => await bus.close());
+
+    var player = client.devices[0].mediaPlayer!;
+    await player.setEqualizer(BlueZMediaPlayerEqualizer.on);
+    await player.setRepeat(BlueZMediaPlayerRepeat.allTracks);
+    await player.setShuffle(BlueZMediaPlayerShuffle.group);
+    await player.setScan(BlueZMediaPlayerScan.allTracks);
+
+    expect(mock.equalizer, equals('on'));
+    expect(mock.repeat, equals('alltracks'));
+    expect(mock.shuffle, equals('group'));
+    expect(mock.scan, equals('alltracks'));
+
+    // Ensure signals handled, then the client's own cache agrees.
+    await bus.ping();
+    expect(player.equalizer, equals(BlueZMediaPlayerEqualizer.on));
+    expect(player.repeat, equals(BlueZMediaPlayerRepeat.allTracks));
+    expect(player.shuffle, equals(BlueZMediaPlayerShuffle.group));
+    expect(player.scan, equals(BlueZMediaPlayerScan.allTracks));
+  });
+
+  test('media player - readPosition bypasses the property cache', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    // BlueZ signals Position only on a seek but computes it on read, so the
+    // cache and the daemon legitimately disagree while a track is playing.
+    await bluez.addMediaPlayer(device,
+        status: 'playing', position: 18000, livePosition: 41000);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var player = client.devices[0].mediaPlayer!;
+    expect(player.position, equals(18000));
+    expect(await player.readPosition(), equals(41000));
+  });
+
+  test('media player - status changes reach a listener', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    var mock = await bluez.addMediaPlayer(device, status: 'paused');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var player = client.devices[0].mediaPlayer!;
+    var changes = player.propertiesChanged.take(1).toList();
+    await mock.change({'Status': DBusString('playing')});
+    expect(
+        await changes,
+        equals([
+          ['Status']
+        ]));
+    expect(player.playerStatus, equals(BlueZMediaPlayerStatus.playing));
+  });
+
+  test('media player - a subscription survives a re-announced interface',
+      () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    var mock = await bluez.addMediaPlayer(device, status: 'paused');
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+    var bus = DBusClient(clientAddress);
+    addTearDown(() async => await bus.close());
+
+    var player = client.devices[0].mediaPlayer!;
+    var seen = <List<String>>[];
+    var subscription = player.propertiesChanged.listen(seen.add);
+    addTearDown(subscription.cancel);
+
+    // BlueZ re-announces InterfacesAdded for a path it has already published
+    // when a player comes back after an AVRCP reconnect. That used to replace
+    // the interface and silently orphan every listener.
+    await bluez.emitSignal(
+        path: DBusObjectPath('/'),
+        interface: 'org.freedesktop.DBus.ObjectManager',
+        name: 'InterfacesAdded',
+        values: [
+          mock.path,
+          DBusDict(DBusSignature('s'), DBusSignature('a{sv}'), {
+            DBusString('org.bluez.MediaPlayer1'):
+                DBusDict.stringVariant({'Status': DBusString('stopped')})
+          })
+        ]);
+    await bus.ping();
+
+    await mock.change({'Status': DBusString('playing')});
+    await bus.ping();
+
+    expect(
+        seen,
+        equals([
+          ['Status']
+        ]));
+    expect(player.playerStatus, equals(BlueZMediaPlayerStatus.playing));
+  });
+
+  test('media transport - codec and volume', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    // Codec 0x02 is MPEG-2,4 AAC.
+    var mock = await bluez.addMediaTransport(device,
+        codec: 0x02,
+        configuration: [0x80, 0x01, 0x04],
+        state: 'active',
+        delay: 1500,
+        volume: 96);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    var transports = client.devices[0].mediaTransports;
+    expect(transports, hasLength(1));
+    var transport = transports[0];
+    expect(transport.codec, equals(0x02));
+    expect(transport.configuration, equals([0x80, 0x01, 0x04]));
+    expect(transport.state, equals(BlueZMediaTransportState.active));
+    expect(transport.delay, equals(1500));
+    expect(transport.volume, equals(96));
+    expect(transport.device?.address, equals('DC:E5:5B:66:AC:96'));
+    expect(transport.uuid,
+        equals(BlueZUUID.fromString('0000110a-0000-1000-8000-00805f9b34fb')));
+
+    await transport.setVolume(40);
+    expect(mock.volume, equals(40));
+  });
+
+  test('media transport - a remote end with no absolute volume', () async {
+    var server = DBusServer();
+    var clientAddress =
+        await server.listenAddress(DBusAddress.unix(dir: Directory.systemTemp));
+    addTearDown(() async => await server.close());
+
+    var bluez = MockBlueZServer(clientAddress);
+    await bluez.start();
+    var adapter = await bluez.addAdapter('hci0');
+    var device = await bluez.addDevice(adapter,
+        address: 'DC:E5:5B:66:AC:96', connected: true);
+    await bluez.addMediaTransport(device);
+
+    var client = BlueZClient(bus: DBusClient(clientAddress));
+    await client.connect();
+    addTearDown(() async => await client.close());
+
+    // Absent, not zero: a device that does not support AVRCP volume must not
+    // look like one turned all the way down.
+    var transport = client.devices[0].mediaTransports[0];
+    expect(transport.volume, isNull);
+    expect(transport.delay, isNull);
+    expect(transport.state, equals(BlueZMediaTransportState.idle));
   });
 }

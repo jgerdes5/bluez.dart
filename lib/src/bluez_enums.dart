@@ -39,6 +39,36 @@ enum BlueZAgentCapability {
   keyboardDisplay,
 }
 
+/// The playback status of a [BlueZMediaPlayer].
+///
+/// [forwardSeek] and [reverseSeek] mean the remote transport is moving, not
+/// that it has stopped - a player fast-forwarding is still playing.
+/// [error] is reported when the property is absent or unrecognised, which
+/// happens on a player object that has not published a status yet.
+enum BlueZMediaPlayerStatus {
+  playing,
+  stopped,
+  paused,
+  forwardSeek,
+  reverseSeek,
+  error,
+}
+
+/// Whether a [BlueZMediaPlayer]'s equalizer is engaged.
+enum BlueZMediaPlayerEqualizer { off, on }
+
+/// The repeat mode of a [BlueZMediaPlayer].
+enum BlueZMediaPlayerRepeat { off, singleTrack, allTracks, group }
+
+/// The shuffle mode of a [BlueZMediaPlayer].
+enum BlueZMediaPlayerShuffle { off, allTracks, group }
+
+/// The scan mode of a [BlueZMediaPlayer].
+enum BlueZMediaPlayerScan { off, allTracks, group }
+
+/// The state of a [BlueZMediaTransport].
+enum BlueZMediaTransportState { idle, pending, active, broadcasting }
+
 /// Type of advertisement.
 enum BlueZAdvertisementType {
   broadcast,

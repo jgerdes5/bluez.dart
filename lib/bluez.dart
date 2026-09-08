@@ -14,4 +14,5 @@ export 'src/bluez_gatt_service.dart';
 export 'src/bluez_advertisement.dart';
 export 'src/bluez_media_player.dart';
 export 'src/bluez_media_control.dart';
+export 'src/bluez_media_transport.dart';
 export 'src/bluez_client.dart' show BlueZClient;

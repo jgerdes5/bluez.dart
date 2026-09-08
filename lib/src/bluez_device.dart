@@ -7,6 +7,7 @@ import 'package:bluez/src/bluez_object.dart';
 import 'package:bluez/src/bluez_uuid.dart';
 import 'package:bluez/src/bluez_media_player.dart';
 import 'package:bluez/src/bluez_media_control.dart';
+import 'package:bluez/src/bluez_media_transport.dart';
 import 'package:dbus/dbus.dart';
 
 /// A Bluetooth device.
@@ -216,10 +217,18 @@ class BlueZDevice {
       _client.getGattServices(_object.path);
 
   /// The media control provided by this device.
-  BlueZMediaControl get mediaControl =>
-      BlueZMediaControl(_object);
+  BlueZMediaControl get mediaControl => BlueZMediaControl(_object);
 
-  /// The media player this device belongs to.
-  BlueZMediaPlayer get mediaPlayer =>
-      _client.getMediaPlayer(mediaControl.player)!;
+  /// The media player this device is playing through, or null if it has not
+  /// exported one.
+  ///
+  /// A device that is connected but has not started playing has no
+  /// MediaPlayer1 object at all, and one can come and go across an AVRCP
+  /// reconnect, so absence is an ordinary state rather than an error.
+  BlueZMediaPlayer? get mediaPlayer =>
+      _client.getMediaPlayer(mediaControl.player);
+
+  /// The audio streams currently configured with this device.
+  List<BlueZMediaTransport> get mediaTransports =>
+      _client.getMediaTransports(_object.path);
 }
